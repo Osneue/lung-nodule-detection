@@ -4,11 +4,17 @@
 
 ---
 
+## 📌 背景
+
+- 本项目的完整的端到端方案规划及模型架构设计参考 *《Deep Learning With PyTorch_Code》—— Eli Stevens, Luca Antiga, Thomas Viehmann（2021，Manning Publications）* 一书。
+- 本项目所用到的数据全部来自于 [LUNA2016 Dataset](https://luna16.grand-challenge.org/Download/)
+- **扩展部分**主要体现在对**模型优化**后，**部署**到**RK3588S**开发板，并输出**性能对比**报告。
+
 ## 🧠 项目亮点
 
-- 基于 PyTorch 实现 CT 影像肺结节检测
-- 使用量化、剪枝、蒸馏等优化技术，提升推理速度
-- 成功部署至 RK3588S，进行真实设备测试
+- 基于 *PyTorch* 实现 CT 影像肺结节检测
+- 使用**量化、剪枝、蒸馏**等优化技术，提升推理速度
+- 成功**部署**至 RK3588S，进行真实设备测试
 - 全流程自动化，从数据处理到部署测试
 - 附带对比图表，评估准确率/速度/内存消耗
 
@@ -16,6 +22,7 @@
 
 ## 📁 项目结构
 
+```bash
 lung-nodule-detection/
 ├── README.md # 项目说明文件
 ├── requirements.txt # 项目依赖的 Python 包列表
@@ -43,6 +50,7 @@ lung-nodule-detection/
 │ ├── accuracy_vs_latency.png # 准确率与延迟的对比图
 │ └── summary_table.md # 项目总结和性能对比表格
 └── LICENSE # 项目开源许可
+```
 
 ---
 
@@ -56,3 +64,8 @@ pip install -r requirements.txt
 conda env create -f environment.yaml
 conda activate lung-nodule
 ```
+
+## 📚 参考资料
+
+- 《Deep Learning With PyTorch_Code》—— Eli Stevens, Luca Antiga, Thomas Viehmann（2021，Manning Publications）
+- [MIT 6.5940 • Fall 2024 • TinyML and Efficient Deep Learning Computing](https://hanlab.mit.edu/courses/2024-fall-65940)
