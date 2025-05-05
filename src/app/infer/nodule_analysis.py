@@ -14,14 +14,18 @@ import torch.optim
 from torch.utils.data import DataLoader
 
 from util.util import enumerateWithEstimate
-from p2ch13.dsets import Luna2dSegmentationDataset
-from .dsets import LunaDataset, getCt, getCandidateInfoDict, getCandidateInfoList, CandidateInfoTuple
-from p2ch13.model import UNetWrapper
+from src.core.dsets_seg import Luna2dSegmentationDataset
+from src.core.dsets_cls import LunaDataset, getCt, getCandidateInfoDict, getCandidateInfoList, CandidateInfoTuple
+from src.core.model_seg import UNetWrapper
 
-import p2ch14.model
+import src.core.model_cls
 
 from util.logconf import logging
 from util.util import xyz2irc, irc2xyz
+from util.util import XyzTuple, IrcTuple
+
+import collections
+import sys
 
 log = logging.getLogger(__name__)
 # log.setLevel(logging.WARN)
@@ -29,6 +33,35 @@ log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
 logging.getLogger("p2ch13.dsets").setLevel(logging.WARNING)
 logging.getLogger("p2ch14.dsets").setLevel(logging.WARNING)
+
+DebugInfo = collections.namedtuple('DebugInfo', ['series_uid', 'labeled_centre_xyz',
+                                                 'segmented_centre_xyz', 'segmented_centre_irc', 'pred_nodule'])
+
+def print_debug_info(segmented_details, classified_details):
+    #segmented_details[0]: 未被分割出来的结节
+    #segmented_details[1]: 成功分割出来的结节
+    #classified_details[0]: 未成功分类的结节
+    #classified_details[1]: 成功分类的结节
+
+    print()
+    print("未被分割出来的结节:")
+    for i in segmented_details[0]:
+        print(i)
+
+    print()
+    print("成功分割出来的结节:")
+    for i in segmented_details[1]:
+        print(i)
+
+    print()
+    print("未成功分类的结节:")
+    for i in classified_details[0]:
+        print(i)
+
+    print()
+    print("成功分类的结节:")
+    for i in classified_details[1]:
+        print(i)
 
 def print_confusion(label, confusions, do_mal):
     row_labels = ['Non-Nodules', 'Benign', 'Malignant']
@@ -68,20 +101,36 @@ def match_and_score(detections, truth, threshold=0.5, threshold_mal=0.5):
                                  else (2 if d[1] < threshold
                                        else 3) for d in detections])
 
-    confusion = np.zeros((3, 4), dtype=np.int)
+    confusion = np.zeros((3, 4), dtype=int)
+    segmented_details = [[], []]
+    classified_details = [[], []]
     if len(detected_xyz) == 0:
         for tn in true_nodules:
             confusion[2 if tn.isMal_bool else 1, 0] += 1
+            segmented_details[0].append(DebugInfo(tn.series_uid,
+                                                  tn.center_xyz,
+                                                  (0,0,0),
+                                                  (0,0,0),
+                                                  0))
     elif len(truth_xyz) == 0:
         for dc in detected_classes:
             confusion[0, dc] += 1
     else:
         normalized_dists = np.linalg.norm(truth_xyz[:, None] - detected_xyz[None], ord=2, axis=-1) / truth_diams[:, None]
         matches = (normalized_dists < 0.7)
-        unmatched_detections = np.ones(len(detections), dtype=np.bool)
-        matched_true_nodules = np.zeros(len(true_nodules), dtype=np.int)
+
+        # if(len(true_nodules) != len(matches.nonzero()[0])):
+        #     print("数据集中的结节与多个分割后的结节相匹配")
+            #sys.exit(1)
+
+        unmatched_detections = np.ones(len(detections), dtype=bool)
+        matched_true_nodules = np.zeros(len(true_nodules), dtype=int)
+        true_nodules_matched_detections = np.full(len(true_nodules), -1, dtype=int)
         for i_tn, i_detection in zip(*matches.nonzero()):
-            matched_true_nodules[i_tn] = max(matched_true_nodules[i_tn], detected_classes[i_detection])
+            if matched_true_nodules[i_tn] < detected_classes[i_detection]:
+                matched_true_nodules[i_tn] = detected_classes[i_detection]
+                true_nodules_matched_detections[i_tn] = i_detection
+            #matched_true_nodules[i_tn] = max(matched_true_nodules[i_tn], detected_classes[i_detection])
             unmatched_detections[i_detection] = False
 
         for ud, dc in zip(unmatched_detections, detected_classes):
@@ -89,7 +138,33 @@ def match_and_score(detections, truth, threshold=0.5, threshold_mal=0.5):
                 confusion[0, dc] += 1
         for tn, dc in zip(true_nodules, matched_true_nodules):
             confusion[2 if tn.isMal_bool else 1, dc] += 1
-    return confusion
+
+        for i, classes in enumerate(matched_true_nodules):
+            if classes:
+                segmented_details[1].append(DebugInfo(true_nodules[i].series_uid,
+                                                      true_nodules[i].center_xyz,
+                                                      (0,0,0),
+                                                      (0,0,0),
+                                                      0))
+                detection_idx = true_nodules_matched_detections[i]
+                detection = detections[detection_idx]
+                if classes == 1:
+                    classified_details[0].append(DebugInfo(true_nodules[i].series_uid,
+                                                           true_nodules[i].center_xyz,
+                                                           tuple(detection[2]),
+                                                           tuple(detection[3].tolist()),detection[0]))
+                else:
+                    classified_details[1].append(DebugInfo(true_nodules[i].series_uid,
+                                                           true_nodules[i].center_xyz,
+                                                           tuple(detection[2]),
+                                                           tuple(detection[3].tolist()),detection[0]))
+            else:
+                segmented_details[0].append(DebugInfo(true_nodules[i].series_uid,
+                                                      true_nodules[i].center_xyz,
+                                                      (0,0,0),
+                                                      (0,0,0),
+                                                      0))
+    return confusion, segmented_details, classified_details
 
 class NoduleAnalysisApp:
     def __init__(self, sys_argv=None):
@@ -123,7 +198,7 @@ class NoduleAnalysisApp:
         parser.add_argument('--segmentation-path',
             help="Path to the saved segmentation model",
             nargs='?',
-            default='data/part2/models/seg_2020-01-26_19.45.12_w4d3c1-bal_1_nodupe-label_pos-d1_fn8-adam.best.state',
+            #default='data/part2/models/seg_2020-01-26_19.45.12_w4d3c1-bal_1_nodupe-label_pos-d1_fn8-adam.best.state',
         )
 
         parser.add_argument('--cls-model',
@@ -134,7 +209,7 @@ class NoduleAnalysisApp:
         parser.add_argument('--classification-path',
             help="Path to the saved classification model",
             nargs='?',
-            default='data/part2/models/cls_2020-02-06_14.16.55_final-nodule-nonnodule.best.state',
+            #default='data/part2/models/cls_2020-02-06_14.16.55_final-nodule-nonnodule.best.state',
         )
 
         parser.add_argument('--malignancy-model',
@@ -150,7 +225,7 @@ class NoduleAnalysisApp:
         )
 
         parser.add_argument('--tb-prefix',
-            default='p2ch14',
+            default='nodule-analysis',
             help="Data prefix to use for Tensorboard run. Defaults to chapter.",
         )
 
@@ -174,24 +249,23 @@ class NoduleAnalysisApp:
             self.cli_args.segmentation_path = self.initModelPath('seg')
 
         if not self.cli_args.classification_path:
-            self.cli_args.classification_path = self.initModelPath('cls')
+            self.cli_args.classification_path = self.initModelPath('nodule-cls')
 
         self.seg_model, self.cls_model, self.malignancy_model = self.initModels()
 
     def initModelPath(self, type_str):
+        type_prefix = 'seg' if type_str == 'seg' else 'cls'
         local_path = os.path.join(
             'data-unversioned',
-            'part2',
             'models',
-            'p2ch13',#self.cli_args.tb_prefix,
-            type_str + '_{}_{}.{}.state'.format('*', '*', 'best'),
+            type_str,
+            type_prefix + '_{}_{}.{}.state'.format('*', '*', 'best'),
         )
 
         file_list = glob.glob(local_path)
         if not file_list:
             pretrained_path = os.path.join(
                 'data',
-                'part2',
                 'models',
                 type_str + '_{}_{}.{}.state'.format('*', '*', '*'),
             )
@@ -227,7 +301,7 @@ class NoduleAnalysisApp:
         log.debug(self.cli_args.classification_path)
         cls_dict = torch.load(self.cli_args.classification_path)
 
-        model_cls = getattr(p2ch14.model, self.cli_args.cls_model)
+        model_cls = getattr(src.core.model_cls, self.cli_args.cls_model)
         cls_model = model_cls()
         cls_model.load_state_dict(cls_dict['model_state'])
         cls_model.eval()
@@ -241,7 +315,7 @@ class NoduleAnalysisApp:
             cls_model.to(self.device)
 
         if self.cli_args.malignancy_path:
-            model_cls = getattr(p2ch14.model, self.cli_args.malignancy_model)
+            model_cls = getattr(src.core.model_cls, self.cli_args.malignancy_model)
             malignancy_model = model_cls()
             malignancy_dict = torch.load(self.cli_args.malignancy_path)
             malignancy_model.load_state_dict(malignancy_dict['model_state'])
@@ -320,13 +394,34 @@ class NoduleAnalysisApp:
             val_list + train_list,
             "Series",
         )
-        all_confusion = np.zeros((3, 4), dtype=np.int)
+        all_confusion = np.zeros((3, 4), dtype=int)
+        all_segmented_details = [[], []]
+        all_classified_details = [[], []]
         for _, series_uid in series_iter:
             ct = getCt(series_uid)
             mask_a = self.segmentCt(ct, series_uid)
 
             candidateInfo_list = self.groupSegmentationOutput(
                 series_uid, ct, mask_a)
+
+            # 增加一个调试步骤
+            # 替换分割输出的某个结节的中心为特定值
+            # target_centre_xyz = np.array((127.96855354309082, 68.08577585220337, -96.459991))
+            # diametre = 11.64560862 * 0.5
+            # for idx, item in enumerate(candidateInfo_list):
+            #     centre_xyz = np.array(item.center_xyz)
+            #     dists = np.linalg.norm(centre_xyz - target_centre_xyz, ord=2)
+            #     #print(target_centre_xyz, centre_xyz, dists)
+            #     #exit()
+            #     if dists < diametre:
+            #         print(dists)
+            #         print("found it!!! {}".format(item))
+            #         candidateInfo_list[idx] = candidateInfo_list[idx]._replace(
+            #             center_xyz = XyzTuple(127.96855354309082, 68.08577585220337,
+            #                                   -96.459991 + diametre * 1.25)
+            #         )
+            #         break
+
             classifications_list = self.classifyCandidates(
                 ct, candidateInfo_list)
 
@@ -341,10 +436,12 @@ class NoduleAnalysisApp:
                         print(s)
 
             if series_uid in candidateInfo_dict:
-                one_confusion = match_and_score(
+                one_confusion, segmented_details, classified_details = match_and_score(
                     classifications_list, candidateInfo_dict[series_uid]
                 )
                 all_confusion += one_confusion
+                all_segmented_details = [x + y for x, y in zip(all_segmented_details, segmented_details)]
+                all_classified_details = [x + y for x, y in zip(all_classified_details, classified_details)]
                 print_confusion(
                     series_uid, one_confusion, self.malignancy_model is not None
                 )
@@ -353,6 +450,7 @@ class NoduleAnalysisApp:
             "Total", all_confusion, self.malignancy_model is not None
         )
 
+        #print_debug_info(all_segmented_details, all_classified_details)
 
     def classifyCandidates(self, ct, candidateInfo_list):
         cls_dl = self.initClassificationDl(candidateInfo_list)
@@ -466,7 +564,15 @@ class NoduleAnalysisApp:
             **percent_dict,
         ))
 
-
+def set_random_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    #torch.set_num_threads(1)
 
 if __name__ == '__main__':
+    set_random_seed(42)
     NoduleAnalysisApp().main()

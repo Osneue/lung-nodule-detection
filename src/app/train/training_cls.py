@@ -4,6 +4,7 @@ import hashlib
 import os
 import shutil
 import sys
+import random
 
 import numpy as np
 from matplotlib import pyplot
@@ -15,8 +16,8 @@ import torch.nn as nn
 from torch.optim import SGD, Adam
 from torch.utils.data import DataLoader
 
-import p2ch14.dsets
-import p2ch14.model
+import core.dsets_cls
+import core.model_cls
 
 from util.util import enumerateWithEstimate
 from util.logconf import logging
@@ -47,7 +48,7 @@ class ClassificationTrainingApp:
         )
         parser.add_argument('--num-workers',
             help='Number of worker processes for background data loading',
-            default=8,
+            default=1,
             type=int,
         )
         parser.add_argument('--epochs',
@@ -80,7 +81,7 @@ class ClassificationTrainingApp:
             default=1,
         )
         parser.add_argument('--tb-prefix',
-            default='p2ch14',
+            default='cls',
             help="Data prefix to use for Tensorboard run. Defaults to chapter.",
         )
         parser.add_argument('comment',
@@ -117,7 +118,7 @@ class ClassificationTrainingApp:
 
 
     def initModel(self):
-        model_cls = getattr(p2ch14.model, self.cli_args.model)
+        model_cls = getattr(core.model_cls, self.cli_args.model)
         model = model_cls()
 
         if self.cli_args.finetune:
@@ -151,7 +152,7 @@ class ClassificationTrainingApp:
         #return Adam(self.model.parameters(), lr=3e-4)
 
     def initTrainDl(self):
-        ds_cls = getattr(p2ch14.dsets, self.cli_args.dataset)
+        ds_cls = getattr(core.dsets_cls, self.cli_args.dataset)
 
         train_ds = ds_cls(
             val_stride=10,
@@ -173,7 +174,7 @@ class ClassificationTrainingApp:
         return train_dl
 
     def initValDl(self):
-        ds_cls = getattr(p2ch14.dsets, self.cli_args.dataset)
+        ds_cls = getattr(core.dsets_cls, self.cli_args.dataset)
 
         val_ds = ds_cls(
             val_stride=10,
@@ -310,7 +311,7 @@ class ClassificationTrainingApp:
 
 
         if augment:
-            input_g = p2ch14.model.augment3d(input_g)
+            input_g = core.model_cls.augment3d(input_g)
 
         logits_g, probability_g = self.model(input_g)
 
@@ -407,7 +408,7 @@ class ClassificationTrainingApp:
         metrics_dict['pr/f1_score'] = \
             2 * (precision * recall) / (precision + recall)
 
-        threshold = torch.linspace(1, 0)
+        threshold = torch.linspace(1, 0, steps=100)
         tpr = (metrics_t[None, METRICS_PRED_P_NDX, posLabel_mask] >= threshold[:, None]).sum(1).float() / pos_count
         fpr = (metrics_t[None, METRICS_PRED_P_NDX, negLabel_mask] >= threshold[:, None]).sum(1).float() / neg_count
         fp_diff = fpr[1:]-fpr[:-1]
@@ -518,7 +519,6 @@ class ClassificationTrainingApp:
     def saveModel(self, type_str, epoch_ndx, isBest=False):
         file_path = os.path.join(
             'data-unversioned',
-            'part2',
             'models',
             self.cli_args.tb_prefix,
             '{}_{}_{}.{}.state'.format(
@@ -550,7 +550,6 @@ class ClassificationTrainingApp:
         if isBest:
             best_path = os.path.join(
                 'data-unversioned',
-                'part2',
                 'models',
                 self.cli_args.tb_prefix,
                 '{}_{}_{}.{}.state'.format(
@@ -592,6 +591,15 @@ class ClassificationTrainingApp:
     #                 log.error([min_data, max_data])
     #                 raise
 
+def set_random_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    #torch.set_num_threads(1)
 
 if __name__ == '__main__':
+    set_random_seed(42)
     ClassificationTrainingApp().main()

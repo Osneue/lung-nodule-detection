@@ -300,7 +300,7 @@ class LunaDataset(Dataset):
 
     def __len__(self):
         if self.ratio_int:
-            return 50000
+            return 100000
         else:
             return len(self.candidateInfo_list)
 

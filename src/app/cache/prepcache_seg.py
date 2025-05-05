@@ -9,7 +9,7 @@ from torch.optim import SGD
 from torch.utils.data import DataLoader
 
 from util.util import enumerateWithEstimate
-from .dsets import LunaDataset, getCtSampleSize
+from core.dsets_seg import PrepcacheLunaDataset, getCtSampleSize
 from util.logconf import logging
 # from .model import LunaModel
 
@@ -19,7 +19,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 
-class LunaPrepCacheApp:
+class SegPrepCacheApp:
     @classmethod
     def __init__(self, sys_argv=None):
         if sys_argv is None:
@@ -33,7 +33,7 @@ class LunaPrepCacheApp:
         )
         parser.add_argument('--num-workers',
             help='Number of worker processes for background data loading',
-            default=8,
+            default=1,
             type=int,
         )
         # parser.add_argument('--scaled',
@@ -48,8 +48,8 @@ class LunaPrepCacheApp:
         log.info("Starting {}, {}".format(type(self).__name__, self.cli_args))
 
         self.prep_dl = DataLoader(
-            LunaDataset(
-                sortby_str='series_uid',
+            PrepcacheLunaDataset(
+                # sortby_str='series_uid',
             ),
             batch_size=self.cli_args.batch_size,
             num_workers=self.cli_args.num_workers,
@@ -65,4 +65,4 @@ class LunaPrepCacheApp:
 
 
 if __name__ == '__main__':
-    LunaPrepCacheApp().main()
+    SegPrepCacheApp().main()

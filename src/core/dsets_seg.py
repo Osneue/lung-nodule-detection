@@ -37,11 +37,11 @@ def getCandidateInfoList(requireOnDisk_bool=True):
     # We construct a set with all series_uids that are present on disk.
     # This will let us use the data, even if we haven't downloaded all of
     # the subsets yet.
-    mhd_list = glob.glob('data-unversioned/part2/luna/subset*/*.mhd')
+    mhd_list = glob.glob('data-unversioned/luna/subset*/*.mhd')
     presentOnDisk_set = {os.path.split(p)[-1][:-4] for p in mhd_list}
 
     candidateInfo_list = []
-    with open('data/part2/luna/annotations_with_malignancy.csv', "r") as f:
+    with open('data/luna/annotations_with_malignancy.csv', "r") as f:
         for row in list(csv.reader(f))[1:]:
             series_uid = row[0]
             annotationCenter_xyz = tuple([float(x) for x in row[1:4]])
@@ -62,7 +62,7 @@ def getCandidateInfoList(requireOnDisk_bool=True):
                 )
             )
 
-    with open('data/part2/luna/candidates.csv', "r") as f:
+    with open('data/luna/candidates.csv', "r") as f:
         for row in list(csv.reader(f))[1:]:
             series_uid = row[0]
 
@@ -101,7 +101,7 @@ def getCandidateInfoDict(requireOnDisk_bool=True):
 class Ct:
     def __init__(self, series_uid):
         mhd_path = glob.glob(
-            'data-unversioned/part2/luna/subset*/{}.mhd'.format(series_uid)
+            'data-unversioned/luna/subset*/{}.mhd'.format(series_uid)
         )[0]
 
         ct_mhd = sitk.ReadImage(mhd_path)
@@ -314,7 +314,7 @@ class TrainingLuna2dSegmentationDataset(Luna2dSegmentationDataset):
         self.ratio_int = 2
 
     def __len__(self):
-        return 10000
+        return 100000
 
     def shuffleSamples(self):
         random.shuffle(self.candidateInfo_list)
@@ -337,7 +337,7 @@ class TrainingLuna2dSegmentationDataset(Luna2dSegmentationDataset):
         ct_t = torch.from_numpy(ct_a[:, row_offset:row_offset+64,
                                      col_offset:col_offset+64]).to(torch.float32)
         pos_t = torch.from_numpy(pos_a[:, row_offset:row_offset+64,
-                                       col_offset:col_offset+64]).to(torch.long)
+                                       col_offset:col_offset+64]).to(torch.bool)
 
         slice_ndx = center_irc.index
 
