@@ -2,3 +2,8 @@
 __pycache__/
 data-unversioned/
 .vscode/
+deployment/models
+runs/
+/*.log
+/*.onnx
+notebooks/tmp/

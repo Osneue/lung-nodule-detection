@@ -377,7 +377,7 @@ class PrepcacheLunaDataset(Dataset):
 class TvTrainingLuna2dSegmentationDataset(torch.utils.data.Dataset):
     def __init__(self, isValSet_bool=False, val_stride=10, contextSlices_count=3):
         assert contextSlices_count == 3
-        data = torch.load('./imgs_and_masks.pt')
+        data = torch.load('./imgs_and_masks.pt', weights_only=True)
         suids = list(set(data['suids']))
         trn_mask_suids = torch.arange(len(suids)) % val_stride < (val_stride - 1)
         trn_suids = {s for i, s in zip(trn_mask_suids, suids) if i}

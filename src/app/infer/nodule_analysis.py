@@ -283,7 +283,7 @@ class NoduleAnalysisApp:
 
     def initModels(self):
         log.debug(self.cli_args.segmentation_path)
-        seg_dict = torch.load(self.cli_args.segmentation_path)
+        seg_dict = torch.load(self.cli_args.segmentation_path, weights_only=True)
 
         seg_model = UNetWrapper(
             in_channels=7,
@@ -299,7 +299,7 @@ class NoduleAnalysisApp:
         seg_model.eval()
 
         log.debug(self.cli_args.classification_path)
-        cls_dict = torch.load(self.cli_args.classification_path)
+        cls_dict = torch.load(self.cli_args.classification_path, weights_only=True)
 
         model_cls = getattr(src.core.model_cls, self.cli_args.cls_model)
         cls_model = model_cls()
@@ -318,7 +318,7 @@ class NoduleAnalysisApp:
             model_cls = getattr(src.core.model_cls, self.cli_args.malignancy_model)
             malignancy_model = model_cls()
             malignancy_dict = torch.load(self.cli_args.malignancy_path)
-            malignancy_model.load_state_dict(malignancy_dict['model_state'])
+            malignancy_model.load_state_dict(malignancy_dict['model_state'], weights_only=True)
             malignancy_model.eval()
             if self.use_cuda:
                 malignancy_model.to(self.device)

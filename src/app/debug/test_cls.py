@@ -41,7 +41,7 @@ class TestClsApp:
     model = model_cls()
 
     print("model_params_path: {}".format(model_params_path))
-    d = torch.load(model_params_path, map_location='cpu')
+    d = torch.load(model_params_path, map_location='cpu', weights_only=True)
     model.load_state_dict(
         d['model_state'],
         strict=True,

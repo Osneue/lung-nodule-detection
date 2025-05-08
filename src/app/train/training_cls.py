@@ -122,7 +122,7 @@ class ClassificationTrainingApp:
         model = model_cls()
 
         if self.cli_args.finetune:
-            d = torch.load(self.cli_args.finetune, map_location='cpu')
+            d = torch.load(self.cli_args.finetune, map_location='cpu', weights_only=True)
             model_blocks = [
                 n for n, subm in model.named_children()
                 if len(list(subm.parameters())) > 0
