@@ -21,6 +21,7 @@ from util.util import enumerateWithEstimate
 from core.dsets_seg import Luna2dSegmentationDataset, TrainingLuna2dSegmentationDataset, getCt
 from util.logconf import logging
 from core.model_seg import UNetWrapper, SegmentationAugmentation
+from tqdm.auto import tqdm
 
 log = logging.getLogger(__name__)
 # log.setLevel(logging.WARN)
@@ -54,7 +55,7 @@ def setup_model(args):
     return model, platform
 
 class SegmentationTestingApp:
-    def __init__(self, sys_argv=None):
+    def __init__(self, sys_argv=None, existing_model=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -68,7 +69,7 @@ class SegmentationTestingApp:
 
         parser.add_argument('--model-path',
             help="Path to model file (.state .rknn ...)",
-            required=True
+            default=None,
         )
 
         parser.add_argument('--verbose',
@@ -99,6 +100,17 @@ class SegmentationTestingApp:
 
         self.cli_args = parser.parse_args(sys_argv)
 
+        if self.cli_args.verbose:
+            log.handlers.clear()
+            log.propagate = True
+        else:
+            log.addHandler(logging.NullHandler())
+            log.propagate = False
+
+        if self.cli_args.model_path is None \
+            and existing_model is None:
+            raise RuntimeError("if model path is not provided, existing_model must NOT be None!!!")
+
         if self.cli_args.platform == 'rknn':
             self.cli_args.batch_size = 1
             if not self.cli_args.target:
@@ -110,7 +122,10 @@ class SegmentationTestingApp:
         self.use_cuda = torch.cuda.is_available()
         self.device = torch.device("cuda" if self.use_cuda else "cpu")
 
-        self.segmentation_model = self.initModel()
+        if existing_model is None:
+            self.segmentation_model = self.initModel()
+        else:
+            self.segmentation_model = existing_model
 
     def __del__(self):
         if self.cli_args.platform == 'rknn':
@@ -152,6 +167,7 @@ class SegmentationTestingApp:
             val_stride=10,
             isValSet_bool=True,
             contextSlices_count=3,
+            verbose=False
         )
 
         batch_size = self.cli_args.batch_size
@@ -168,12 +184,24 @@ class SegmentationTestingApp:
 
         return val_dl
 
+    def eval(self):
+        val_dl = self.initValDl()
+
+        log.info("{} batches of size {}*{}".format(
+            len(val_dl),
+            self.cli_args.batch_size,
+            (torch.cuda.device_count() if self.use_cuda else 1),
+        ))
+
+        epoch_ndx = 0
+        valMetrics_t = self.doValidation(epoch_ndx, val_dl, True)
+        metrics_dict = self.logMetrics(epoch_ndx, 'val', valMetrics_t)
+        return metrics_dict
+
     def main(self):
         log.info("Starting {}, {}".format(type(self).__name__, self.cli_args))
 
         val_dl = self.initValDl()
-
-        best_score = 0.0
 
         log.info("{} batches of size {}*{}".format(
             len(val_dl),
@@ -183,21 +211,24 @@ class SegmentationTestingApp:
 
         epoch_ndx = 0
         valMetrics_t = self.doValidation(epoch_ndx, val_dl)
-        score = self.logMetrics(epoch_ndx, 'val', valMetrics_t)
-        best_score = max(score, best_score)
+        self.logMetrics(epoch_ndx, 'val', valMetrics_t)
 
-    def doValidation(self, epoch_ndx, val_dl):
+    def doValidation(self, epoch_ndx, val_dl, tqdm_en=False):
         with torch.no_grad():
             valMetrics_g = torch.zeros(METRICS_SIZE, len(val_dl.dataset), device=self.device)
 
             if self.cli_args.platform == 'pytorch':
                 self.segmentation_model.eval()
 
-            batch_iter = enumerateWithEstimate(
-                val_dl,
-                "E{} Validation ".format(epoch_ndx),
-                start_ndx=val_dl.num_workers,
-            )
+            if tqdm_en:
+                batch_iter = enumerate(tqdm(val_dl, desc="eval", leave=False, 
+                                  disable=False))
+            else:
+                batch_iter = enumerateWithEstimate(
+                    val_dl,
+                    "E{} Validation ".format(epoch_ndx),
+                    start_ndx=val_dl.num_workers,
+                )
             for batch_ndx, batch_tup in batch_iter:
                 self.computeBatchLoss(batch_ndx, batch_tup, val_dl.batch_size, valMetrics_g)
 
@@ -306,7 +337,7 @@ class SegmentationTestingApp:
 
         score = metrics_dict['pr/recall']
 
-        return score
+        return metrics_dict
 
 def set_random_seed(seed=42):
     random.seed(seed)
