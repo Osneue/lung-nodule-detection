@@ -5,6 +5,8 @@ import datetime
 
 from rknn.api import RKNN
 
+__all__ = ['convert_main']
+
 #DATASET_PATH = '../../../datasets/COCO/coco_subset_20.txt'
 DATASET_PATH = ''
 
@@ -18,6 +20,12 @@ def parse_arg(sys_argv=None):
     
     parser.add_argument('--verbose',
         help="Enable log details",
+        action='store_true',
+        default=False
+    )
+
+    parser.add_argument('--pruning',
+        help="Enable model pruning",
         action='store_true',
         default=False
     )
@@ -54,6 +62,7 @@ def parse_arg(sys_argv=None):
     model_path = cli_args.import_path
     platform = cli_args.platform
     model_type = cli_args.model_type
+    pruning = cli_args.pruning
 
     do_quant = False
     data_type = cli_args.dtype
@@ -72,10 +81,10 @@ def parse_arg(sys_argv=None):
 
     rknn_verbose = cli_args.verbose
 
-    return model_path, platform, do_quant, output_path, rknn_verbose
+    return model_path, platform, do_quant, output_path, rknn_verbose, pruning
 
 def convert_main(sys_argv=None):
-    model_path, platform, do_quant, output_path, verbose = parse_arg(sys_argv)
+    model_path, platform, do_quant, output_path, verbose, pruning = parse_arg(sys_argv)
     #print(model_path, platform, do_quant, output_path)
 
     # Create RKNN object
@@ -85,7 +94,8 @@ def convert_main(sys_argv=None):
     print('--> Config model')
     # rknn.config(mean_values=[[0, 0, 0]], std_values=[
     #                 [255, 255, 255]], target_platform=platform)
-    rknn.config(target_platform=platform)
+    rknn.config(target_platform=platform, model_pruning=pruning)
+    print('is model pruning enabled: ', pruning)
     print('done')
 
     # Load model

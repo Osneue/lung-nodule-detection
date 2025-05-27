@@ -233,7 +233,15 @@ class Luna2dSegmentationDataset(Dataset):
                  series_uid=None,
                  contextSlices_count=3,
                  fullCt_bool=False,
+                 verbose=True
             ):
+        if verbose:
+            log.handlers.clear()
+            log.propagate = True
+        else:
+            log.addHandler(logging.NullHandler())
+            log.propagate = False
+
         self.contextSlices_count = contextSlices_count
         self.fullCt_bool = fullCt_bool
 

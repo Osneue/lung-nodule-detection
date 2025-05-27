@@ -7,3 +7,4 @@ runs/
 /*.log
 /*.onnx
 notebooks/tmp/
+optimization/models

@@ -43,7 +43,7 @@ METRICS_FP_NDX = 9
 METRICS_SIZE = 10
 
 class SegmentationTrainingApp:
-    def __init__(self, sys_argv=None):
+    def __init__(self, sys_argv=None, existing_model=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -106,6 +106,12 @@ class SegmentationTrainingApp:
             default='none',
         )
 
+        parser.add_argument('--finetune',
+            help="Finetune an existing model.",
+            action='store_true',
+            default=False,
+        )
+
         self.cli_args = parser.parse_args(sys_argv)
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         self.totalTrainingSamples_count = 0
@@ -127,20 +133,30 @@ class SegmentationTrainingApp:
         self.use_cuda = torch.cuda.is_available()
         self.device = torch.device("cuda" if self.use_cuda else "cpu")
 
-        self.segmentation_model, self.augmentation_model = self.initModel()
+        if self.cli_args.finetune and existing_model is None:
+            raise RuntimeError("if finetune set, must pass an existing model in")
+        if not self.cli_args.finetune and existing_model is not None:
+            raise RuntimeError("if finetune not set, don't pass an existing model in")
+        self.finetune = self.cli_args.finetune
+        self.best_finetuned_mode = None
+
+        self.segmentation_model, self.augmentation_model = self.initModel(existing_model)
         self.optimizer = self.initOptimizer()
 
 
-    def initModel(self):
-        segmentation_model = UNetWrapper(
-            in_channels=7,
-            n_classes=1,
-            depth=3,
-            wf=4,
-            padding=True,
-            batch_norm=True,
-            up_mode='upconv',
-        )
+    def initModel(self, existing_segmentation_model=None):
+        if existing_segmentation_model is None:
+            segmentation_model = UNetWrapper(
+                in_channels=7,
+                n_classes=1,
+                depth=3,
+                wf=4,
+                padding=True,
+                batch_norm=True,
+                up_mode='upconv',
+            )
+        else:
+            segmentation_model = existing_segmentation_model
 
         augmentation_model = SegmentationAugmentation(**self.augmentation_dict)
 
@@ -215,7 +231,10 @@ class SegmentationTrainingApp:
         val_dl = self.initValDl()
 
         best_score = 0.0
-        self.validation_cadence = 5
+        if self.finetune:
+            self.validation_cadence = 1
+        else:
+            self.validation_cadence = 5
         for epoch_ndx in range(1, self.cli_args.epochs + 1):
             log.info("Epoch {} of {}, {}/{} batches of size {}*{}".format(
                 epoch_ndx,
@@ -235,13 +254,21 @@ class SegmentationTrainingApp:
                 score = self.logMetrics(epoch_ndx, 'val', valMetrics_t)
                 best_score = max(score, best_score)
 
-                self.saveModel('seg', epoch_ndx, score == best_score)
+                if not self.finetune:
+                    self.saveModel('seg', epoch_ndx, score == best_score)
 
-                self.logImages(epoch_ndx, 'trn', train_dl)
-                self.logImages(epoch_ndx, 'val', val_dl)
+                    self.logImages(epoch_ndx, 'trn', train_dl)
+                    self.logImages(epoch_ndx, 'val', val_dl)
+                else:
+                    if score == best_score:
+                        self.best_finetuned_mode = self.segmentation_model
 
-        self.trn_writer.close()
-        self.val_writer.close()
+        if self.trn_writer is not None:
+            self.trn_writer.close()
+            self.val_writer.close()
+
+        if self.finetune:
+            return self.best_finetuned_mode
 
     def doTraining(self, epoch_ndx, train_dl):
         trnMetrics_g = torch.zeros(METRICS_SIZE, len(train_dl.dataset), device=self.device)
@@ -441,15 +468,16 @@ class SegmentationTrainingApp:
             **metrics_dict,
         ))
 
-        self.initTensorboardWriters()
-        writer = getattr(self, mode_str + '_writer')
+        if not self.finetune:
+            self.initTensorboardWriters()
+            writer = getattr(self, mode_str + '_writer')
 
-        prefix_str = 'seg_'
+            prefix_str = 'seg_'
 
-        for key, value in metrics_dict.items():
-            writer.add_scalar(prefix_str + key, value, self.totalTrainingSamples_count)
+            for key, value in metrics_dict.items():
+                writer.add_scalar(prefix_str + key, value, self.totalTrainingSamples_count)
 
-        writer.flush()
+            writer.flush()
 
         score = metrics_dict['pr/recall']
 

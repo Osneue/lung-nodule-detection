@@ -7,6 +7,8 @@ from pathlib import Path
 from core.model_seg import UNetWrapper
 from core.model_cls import LunaModel
 
+__all__ = ['export_onnx']
+
 def parse_arg(sys_argv=None):
   if sys_argv is None:
     sys_argv = sys.argv[1:]
@@ -23,7 +25,6 @@ def parse_arg(sys_argv=None):
 
   parser.add_argument('--import-path',
       help="Path to the imported model",
-      required=True
   )
 
   parser.add_argument('--export-path',
@@ -49,26 +50,31 @@ def parse_arg(sys_argv=None):
     cli_args.export_path,
     cli_args.input_shape)
 
-def export_onnx(sys_argv=None):
+def export_onnx(sys_argv=None, existing_model=None):
   model_type, import_path, export_path, input_shape = parse_arg(sys_argv)
   #print(model_type, import_path, export_path, input_shape)
 
-  model_dict = torch.load(import_path, weights_only=True)
+  if (import_path is None) == (existing_model is None):
+    raise RuntimeError("only one of import_path and existing_model must be set")
 
   model = None
-  if model_type == 'cls':
-    model = LunaModel()
-  elif model_type == 'seg':
-    model = UNetWrapper(in_channels=7,
-      n_classes=1,
-      depth=3,
-      wf=4,
-      padding=True,
-      batch_norm=True,
-      up_mode='upconv',
-    )
+  if existing_model is None:
+    if model_type == 'cls':
+      model = LunaModel()
+    elif model_type == 'seg':
+      model = UNetWrapper(in_channels=7,
+        n_classes=1,
+        depth=3,
+        wf=4,
+        padding=True,
+        batch_norm=True,
+        up_mode='upconv',
+      )
 
-  model.load_state_dict(model_dict['model_state'])
+    model_dict = torch.load(import_path, weights_only=True, map_location='cpu')
+    model.load_state_dict(model_dict['model_state'])
+  else:
+    model = existing_model
   model.eval()
 
   dummy_input = torch.randn(input_shape)  # 输入的假数据，根据模型的输入要求调整
