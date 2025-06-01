@@ -6,6 +6,7 @@ import shutil
 import socket
 import sys
 import random
+import copy
 
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
@@ -138,7 +139,7 @@ class SegmentationTrainingApp:
         if not self.cli_args.finetune and existing_model is not None:
             raise RuntimeError("if finetune not set, don't pass an existing model in")
         self.finetune = self.cli_args.finetune
-        self.best_finetuned_mode = None
+        self.finetuned_models = []
 
         self.segmentation_model, self.augmentation_model = self.initModel(existing_model)
         self.optimizer = self.initOptimizer()
@@ -260,15 +261,15 @@ class SegmentationTrainingApp:
                     self.logImages(epoch_ndx, 'trn', train_dl)
                     self.logImages(epoch_ndx, 'val', val_dl)
                 else:
-                    if score == best_score:
-                        self.best_finetuned_mode = self.segmentation_model
+                    self.finetuned_models.append(copy.deepcopy(self.segmentation_model))
+                    self.saveModel('seg-prunned-finetuned', epoch_ndx, False)
 
         if self.trn_writer is not None:
             self.trn_writer.close()
             self.val_writer.close()
 
         if self.finetune:
-            return self.best_finetuned_mode
+            return self.finetuned_models
 
     def doTraining(self, epoch_ndx, train_dl):
         trnMetrics_g = torch.zeros(METRICS_SIZE, len(train_dl.dataset), device=self.device)
@@ -338,7 +339,11 @@ class SegmentationTrainingApp:
             metrics_g[METRICS_FN_NDX, start_ndx:end_ndx] = fn
             metrics_g[METRICS_FP_NDX, start_ndx:end_ndx] = fp
 
-        return diceLoss_g.mean() + fnLoss_g.mean() * 8
+        if self.finetune:
+            fnLoss_ratio = 3
+        else:
+            fnLoss_ratio = 8
+        return diceLoss_g.mean() + fnLoss_g.mean() * fnLoss_ratio
 
     def diceLoss(self, prediction_g, label_g, epsilon=1):
         diceLabel_g = label_g.sum(dim=[1,2,3])

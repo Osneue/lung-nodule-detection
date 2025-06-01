@@ -120,9 +120,9 @@ class SegmentationTestingApp:
             log.addHandler(logging.NullHandler())
             log.propagate = False
 
-        if self.cli_args.model_path is None \
-            and existing_model is None:
-            raise RuntimeError("if model path is not provided, existing_model must NOT be None!!!")
+        if (self.cli_args.model_path is None) == \
+            (existing_model is None):
+            raise RuntimeError("Only one of model-path or existing_model can be set")
 
         if self.cli_args.platform == 'rknn':
             self.cli_args.batch_size = 1

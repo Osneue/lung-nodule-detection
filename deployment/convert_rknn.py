@@ -7,8 +7,7 @@ from rknn.api import RKNN
 
 __all__ = ['convert_main']
 
-#DATASET_PATH = '../../../datasets/COCO/coco_subset_20.txt'
-DATASET_PATH = ''
+DATASET_PATH = './calib_data/dataset.txt'
 
 def parse_arg(sys_argv=None):
     if sys_argv is None:
@@ -17,7 +16,7 @@ def parse_arg(sys_argv=None):
     parser = argparse.ArgumentParser(
         description="Convert ONNX to RKNN format",
         usage="%(prog)s --model-type {seg,cls} --import-path IMPORT_PATH --platform {rk3588,...} [--export-path EXPORT_PATH] [--dtype {i8,u8,fp}] [--verbose]")
-    
+
     parser.add_argument('--verbose',
         help="Enable log details",
         action='store_true',
@@ -57,6 +56,23 @@ def parse_arg(sys_argv=None):
         default='fp'
     )
 
+    parser.add_argument('--quantized-algorithm',
+        choices=['normal', 'kl_divergence', 'mmse'],
+        help="Which quantized algorithm to use in quantization",
+        default='normal'
+    )
+
+    parser.add_argument('--calib-dir',
+        help="Data type of model params",
+        default=DATASET_PATH
+    )
+
+    parser.add_argument('--accuracy-analysis',
+        help="Enable accuracy analysis",
+        action='store_true',
+        default=False
+    )
+
     cli_args = parser.parse_args(sys_argv)
 
     model_path = cli_args.import_path
@@ -81,10 +97,13 @@ def parse_arg(sys_argv=None):
 
     rknn_verbose = cli_args.verbose
 
-    return model_path, platform, do_quant, output_path, rknn_verbose, pruning
+    return model_path, platform, do_quant, output_path, rknn_verbose, pruning, \
+        cli_args.accuracy_analysis, cli_args.calib_dir, cli_args.quantized_algorithm
 
 def convert_main(sys_argv=None):
-    model_path, platform, do_quant, output_path, verbose, pruning = parse_arg(sys_argv)
+    model_path, platform, do_quant, output_path, \
+        verbose, pruning, accuracy_analysis, calib_dir, \
+        quantized_algorithm = parse_arg(sys_argv)
     #print(model_path, platform, do_quant, output_path)
 
     # Create RKNN object
@@ -94,7 +113,8 @@ def convert_main(sys_argv=None):
     print('--> Config model')
     # rknn.config(mean_values=[[0, 0, 0]], std_values=[
     #                 [255, 255, 255]], target_platform=platform)
-    rknn.config(target_platform=platform, model_pruning=pruning)
+    rknn.config(target_platform=platform, model_pruning=pruning,\
+                quantized_algorithm=quantized_algorithm)
     print('is model pruning enabled: ', pruning)
     print('done')
 
@@ -108,11 +128,20 @@ def convert_main(sys_argv=None):
 
     # Build model
     print('--> Building model')
-    ret = rknn.build(do_quantization=do_quant, dataset=DATASET_PATH)
+    ret = rknn.build(do_quantization=do_quant, dataset=calib_dir)
     if ret != 0:
         print('Build model failed!')
         exit(ret)
     print('done')
+
+    # Accuracy analysis
+    if accuracy_analysis:
+        print('--> Accuracy analysis')
+        ret = rknn.accuracy_analysis(inputs=['./dog_224x224.jpg'], output_dir='./snapshot')
+        if ret != 0:
+            print('Accuracy analysis failed!')
+            exit(ret)
+        print('done')
 
     # Export rknn model
     print('--> Export rknn model')

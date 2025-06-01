@@ -5,6 +5,8 @@ import glob
 import math
 import os
 import random
+import shutil
+from tqdm.auto import tqdm
 
 from collections import namedtuple
 
@@ -287,6 +289,7 @@ class Luna2dSegmentationDataset(Dataset):
         ))
 
     def __len__(self):
+        #return 100
         return len(self.sample_list)
 
     def __getitem__(self, ndx):
@@ -316,10 +319,13 @@ class Luna2dSegmentationDataset(Dataset):
 
 
 class TrainingLuna2dSegmentationDataset(Luna2dSegmentationDataset):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, save_calib=False, calib_count=200, calib_dir='./calib_data', *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.ratio_int = 2
+
+        if save_calib:
+            self.save_calibration_set(calib_dir, calib_count)
 
     def __len__(self):
         return 100000
@@ -350,6 +356,41 @@ class TrainingLuna2dSegmentationDataset(Luna2dSegmentationDataset):
         slice_ndx = center_irc.index
 
         return ct_t, pos_t, candidateInfo_tup.series_uid, slice_ndx
+
+    def save_calibration_set(self, calib_dir, calib_count):
+        if os.path.exists(calib_dir):
+            shutil.rmtree(calib_dir)
+        os.makedirs(calib_dir, exist_ok=True)
+        pos_num = len(self.pos_list)
+        stride = round(pos_num / calib_count)
+        stride = int(stride)
+        stride = max(stride,1)
+        calib_list = self.pos_list[::stride]
+        #print(pos_num, stride, len(calib_list))
+        with open(f'{calib_dir}/dataset.txt', 'w') as f_txt:
+            iter = tqdm(calib_list, desc="calib-data", leave=False,
+                                  disable=False)
+            for i, candidate in enumerate(iter):
+                candidateInfo_tup = calib_list[i]
+                ct_a = self.getitem_CalibCrop(candidateInfo_tup)
+                file_path = os.path.join(calib_dir, f'calib_{i}.npy')
+                np.save(file_path, ct_a)
+                relative_path = f'calib_{i}.npy'
+                f_txt.write(relative_path + '\n')
+        log.info("Save calibration dataset completed.")
+
+    def getitem_CalibCrop(self, candidateInfo_tup):
+        _, _, center_irc = getCtRawCandidate(
+            candidateInfo_tup.series_uid,
+            candidateInfo_tup.center_xyz,
+            (7, 96, 96),
+        )
+        slice_ndx = center_irc.index
+        ct_t, _, _, _ = \
+            self.getitem_fullSlice(candidateInfo_tup.series_uid, slice_ndx)
+        ct_a = ct_t.unsqueeze(0).cpu().numpy()
+
+        return ct_a
 
 class PrepcacheLunaDataset(Dataset):
     def __init__(self, *args, **kwargs):
