@@ -324,6 +324,7 @@ class TrainingLuna2dSegmentationDataset(Luna2dSegmentationDataset):
 
         self.ratio_int = 2
 
+        self.calib_list = self.create_calibration_set(calib_count)
         if save_calib:
             self.save_calibration_set(calib_dir, calib_count)
 
@@ -357,16 +358,31 @@ class TrainingLuna2dSegmentationDataset(Luna2dSegmentationDataset):
 
         return ct_t, pos_t, candidateInfo_tup.series_uid, slice_ndx
 
-    def save_calibration_set(self, calib_dir, calib_count):
-        if os.path.exists(calib_dir):
-            shutil.rmtree(calib_dir)
-        os.makedirs(calib_dir, exist_ok=True)
+    def create_calibration_set(self, calib_count):
         pos_num = len(self.pos_list)
         stride = round(pos_num / calib_count)
         stride = int(stride)
         stride = max(stride,1)
         calib_list = self.pos_list[::stride]
         #print(pos_num, stride, len(calib_list))
+        return calib_list
+
+    def get_calibration_set(self):
+        calib_list = self.calib_list
+        tensor_list = []
+        iter = tqdm(calib_list, desc="calib-data", leave=False,
+                                  disable=False)
+        for i, candidate in enumerate(iter):
+            candidateInfo_tup = calib_list[i]
+            ct_a = self.getitem_CalibCrop(candidateInfo_tup)
+            tensor_list.append(torch.from_numpy(ct_a))
+        return tensor_list
+
+    def save_calibration_set(self, calib_dir, calib_count):
+        if os.path.exists(calib_dir):
+            shutil.rmtree(calib_dir)
+        os.makedirs(calib_dir, exist_ok=True)
+        calib_list = self.calib_list
         with open(f'{calib_dir}/dataset.txt', 'w') as f_txt:
             iter = tqdm(calib_list, desc="calib-data", leave=False,
                                   disable=False)

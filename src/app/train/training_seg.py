@@ -262,7 +262,7 @@ class SegmentationTrainingApp:
                     self.logImages(epoch_ndx, 'val', val_dl)
                 else:
                     self.finetuned_models.append(copy.deepcopy(self.segmentation_model))
-                    self.saveModel('seg-prunned-finetuned', epoch_ndx, False)
+                    self.saveModel('seg-finetuned', epoch_ndx, False)
 
         if self.trn_writer is not None:
             self.trn_writer.close()

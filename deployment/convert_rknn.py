@@ -120,7 +120,10 @@ def convert_main(sys_argv=None):
 
     # Load model
     print('--> Loading model')
-    ret = rknn.load_onnx(model=model_path)
+    if model_path.endswith('.onnx'):
+        ret = rknn.load_onnx(model=model_path)
+    elif model_path.endswith('.pt'):
+        ret = rknn.load_pytorch(model=model_path, input_size_list=[[1,7,512,512]])
     if ret != 0:
         print('Load model failed!')
         exit(ret)

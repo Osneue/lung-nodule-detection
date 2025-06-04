@@ -13,6 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 import torch
 import torch.nn as nn
 import torch.optim
+import torch.nn.quantized as nnq
 
 from torch.optim import SGD, Adam
 from torch.utils.data import DataLoader
@@ -54,6 +55,14 @@ def setup_model(args):
         assert False, "{} is not rknn model".format(model_path)
     print('Model-{} is {} model, starting val'.format(model_path, platform))
     return model, platform
+
+def is_quantized_model(model):
+    if model is None:
+        return False
+    for module in model.modules():
+        if isinstance(module, (nnq.Conv2d, nnq.Linear)):
+            return True
+    return False
 
 class SegmentationTestingApp:
     def __init__(self, sys_argv=None, existing_model=None):
@@ -133,6 +142,8 @@ class SegmentationTestingApp:
         self.totalTrainingSamples_count = 0
 
         self.use_cuda = torch.cuda.is_available()
+        if is_quantized_model(existing_model):
+            self.use_cuda = False
         self.device = torch.device("cuda" if self.use_cuda else "cpu")
 
         if existing_model is None:
