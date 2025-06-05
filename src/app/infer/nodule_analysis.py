@@ -2,6 +2,7 @@ import argparse
 import glob
 import os
 import sys
+import random
 
 import numpy as np
 import scipy.ndimage.measurements as measurements
@@ -26,13 +27,12 @@ from util.util import XyzTuple, IrcTuple
 
 import collections
 import sys
+from tqdm.auto import tqdm
 
 log = logging.getLogger(__name__)
 # log.setLevel(logging.WARN)
 # log.setLevel(logging.INFO)
 log.setLevel(logging.DEBUG)
-logging.getLogger("p2ch13.dsets").setLevel(logging.WARNING)
-logging.getLogger("p2ch14.dsets").setLevel(logging.WARNING)
 
 DebugInfo = collections.namedtuple('DebugInfo', ['series_uid', 'labeled_centre_xyz',
                                                  'segmented_centre_xyz', 'segmented_centre_irc', 'pred_nodule'])
@@ -180,7 +180,7 @@ class NoduleAnalysisApp:
         )
         parser.add_argument('--num-workers',
             help='Number of worker processes for background data loading',
-            default=4,
+            default=1,
             type=int,
         )
 
@@ -235,12 +235,27 @@ class NoduleAnalysisApp:
             help="Series UID to use.",
         )
 
+        parser.add_argument('--platform',
+            help="Choose the model backend: 'pytorch' or 'rknn'",
+            choices=['pytorch', 'rknn'],
+            required=True,
+        )
+        parser.add_argument('--target',
+            help="Choose which model to convert",
+            choices=['rk3588'], # 可参照 rknn-toolkit2 api 补充其他平台
+        )
+
         self.cli_args = parser.parse_args(sys_argv)
         # self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
 
         if not (bool(self.cli_args.series_uid) ^ self.cli_args.run_validation):
             raise Exception("One and only one of series_uid and --run-validation should be given")
 
+        if self.cli_args.platform == 'rknn':
+            self.cli_args.batch_size = 1
+            log.info("RK-NPU only support batch size = 1")
+            if not self.cli_args.target:
+                parser.error("rknn model type requires --target")
 
         self.use_cuda = torch.cuda.is_available()
         self.device = torch.device("cuda" if self.use_cuda else "cpu")
@@ -281,22 +296,40 @@ class NoduleAnalysisApp:
             log.debug([local_path, pretrained_path, file_list])
             raise
 
+    def initRknnModel(self, model_path, target):
+        def setup_model(model_path, target):
+            if model_path.endswith('.rknn'):
+                platform = 'rknn'
+                from .rknn_executor import RKNN_model_container
+                model = RKNN_model_container(model_path, target)
+            else:
+                assert False, "{} is not rknn model".format(model_path)
+            print('Model-{} is {} model, starting val'.format(model_path, platform))
+            return model, platform
+
+        model, platform = setup_model(model_path, target)
+        return model
+
     def initModels(self):
         log.debug(self.cli_args.segmentation_path)
-        seg_dict = torch.load(self.cli_args.segmentation_path, weights_only=True)
 
-        seg_model = UNetWrapper(
-            in_channels=7,
-            n_classes=1,
-            depth=3,
-            wf=4,
-            padding=True,
-            batch_norm=True,
-            up_mode='upconv',
-        )
+        if self.cli_args.platform == 'pytorch':
+            seg_dict = torch.load(self.cli_args.segmentation_path, weights_only=True)
+            seg_model = UNetWrapper(
+                in_channels=7,
+                n_classes=1,
+                depth=3,
+                wf=4,
+                padding=True,
+                batch_norm=True,
+                up_mode='upconv',
+            )
 
-        seg_model.load_state_dict(seg_dict['model_state'])
-        seg_model.eval()
+            seg_model.load_state_dict(seg_dict['model_state'])
+            seg_model.eval()
+        elif self.cli_args.platform == 'rknn':
+            seg_model = self.initRknnModel(self.cli_args.segmentation_path,\
+                                           self.cli_args.target)
 
         log.debug(self.cli_args.classification_path)
         cls_dict = torch.load(self.cli_args.classification_path, weights_only=True)
@@ -308,10 +341,12 @@ class NoduleAnalysisApp:
 
         if self.use_cuda:
             if torch.cuda.device_count() > 1:
-                seg_model = nn.DataParallel(seg_model)
+                if self.cli_args.platform == 'pytorch':
+                    seg_model = nn.DataParallel(seg_model)
                 cls_model = nn.DataParallel(cls_model)
 
-            seg_model.to(self.device)
+            if self.cli_args.platform == 'pytorch':
+                seg_model.to(self.device)
             cls_model.to(self.device)
 
         if self.cli_args.malignancy_path:
@@ -483,10 +518,17 @@ class NoduleAnalysisApp:
         with torch.no_grad():
             output_a = np.zeros_like(ct.hu_a, dtype=np.float32)
             seg_dl = self.initSegmentationDl(series_uid)  #  <3>
-            for input_t, _, _, slice_ndx_list in seg_dl:
+            for input_t, _, _, slice_ndx_list \
+                in tqdm(seg_dl, desc="segmentation", leave=False, disable=False):
 
                 input_g = input_t.to(self.device)
-                prediction_g = self.seg_model(input_g)
+
+                if self.cli_args.platform == 'pytorch':
+                    prediction_g = self.seg_model(input_g)
+                elif self.cli_args.platform == 'rknn':
+                    input_np = input_t.numpy().astype(np.float16)  # RKNN 接口通常需要 numpy 格式
+                    outputs = self.seg_model.run([input_np], "NCHW")
+                    prediction_g = torch.tensor(outputs[0]).to(self.device)
 
                 for i, slice_ndx in enumerate(slice_ndx_list):
                     output_a[slice_ndx] = prediction_g[i].cpu().numpy()

@@ -143,6 +143,7 @@ class SegmentationTrainingApp:
 
         self.segmentation_model, self.augmentation_model = self.initModel(existing_model)
         self.optimizer = self.initOptimizer()
+        self.val_metrics_dict_list = []
 
 
     def initModel(self, existing_segmentation_model=None):
@@ -230,6 +231,7 @@ class SegmentationTrainingApp:
 
         train_dl = self.initTrainDl()
         val_dl = self.initValDl()
+        val_metrics_dict_list = []
 
         best_score = 0.0
         if self.finetune:
@@ -252,7 +254,8 @@ class SegmentationTrainingApp:
             if epoch_ndx == 1 or epoch_ndx % self.validation_cadence == 0:
                 # if validation is wanted
                 valMetrics_t = self.doValidation(epoch_ndx, val_dl)
-                score = self.logMetrics(epoch_ndx, 'val', valMetrics_t)
+                val_metrics_dict = {}
+                score = self.logMetrics(epoch_ndx, 'val', valMetrics_t, val_metrics_dict)
                 best_score = max(score, best_score)
 
                 if not self.finetune:
@@ -262,6 +265,7 @@ class SegmentationTrainingApp:
                     self.logImages(epoch_ndx, 'val', val_dl)
                 else:
                     self.finetuned_models.append(copy.deepcopy(self.segmentation_model))
+                    val_metrics_dict_list.append(val_metrics_dict)
                     self.saveModel('seg-finetuned', epoch_ndx, False)
 
         if self.trn_writer is not None:
@@ -269,6 +273,7 @@ class SegmentationTrainingApp:
             self.val_writer.close()
 
         if self.finetune:
+            self.val_metrics_dict_list = val_metrics_dict_list
             return self.finetuned_models
 
     def doTraining(self, epoch_ndx, train_dl):
@@ -423,7 +428,7 @@ class SegmentationTrainingApp:
                 # data item belongs where.
                 writer.flush()
 
-    def logMetrics(self, epoch_ndx, mode_str, metrics_t):
+    def logMetrics(self, epoch_ndx, mode_str, metrics_t, metrics_dict=None):
         log.info("E{} {}".format(
             epoch_ndx,
             type(self).__name__,
@@ -435,7 +440,8 @@ class SegmentationTrainingApp:
 
         allLabel_count = sum_a[METRICS_TP_NDX] + sum_a[METRICS_FN_NDX]
 
-        metrics_dict = {}
+        if metrics_dict is None:
+            metrics_dict = {}
         metrics_dict['loss/all'] = metrics_a[METRICS_LOSS_NDX].mean()
 
         metrics_dict['percent_all/tp'] = \
@@ -555,6 +561,9 @@ class SegmentationTrainingApp:
 
         with open(file_path, 'rb') as f:
             log.info("SHA1: " + hashlib.sha1(f.read()).hexdigest())
+
+    def getLastTraningMetrics(self):
+        return self.val_metrics_dict_list
 
 def set_random_seed(seed=42):
     random.seed(seed)

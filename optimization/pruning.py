@@ -1,11 +1,18 @@
+import argparse
 from util.profile import *
+from util.logconf import logging
 from typing import Union, List
 import matplotlib.pyplot as plt
 import copy
-from app.infer.eval_seg import SegmentationTestingApp
+from .helper import train, evaluate, save_model
+
+log = logging.getLogger(__name__)
+# log.setLevel(logging.WARN)
+# log.setLevel(logging.INFO)
+log.setLevel(logging.DEBUG)
 
 __all__ = ['plot_weight_distribution', 'plot_num_parameters_distribution',\
-    'print_perf_diff', 'channel_prune', 'load_model', 'apply_channel_sorting_with_skip']
+    'channel_prune', 'apply_channel_sorting_with_skip']
 
 def plot_weight_distribution(model, bins=256, count_nonzero_only=False):
     fig, axes = plt.subplots(5,3, figsize=(10, 10))
@@ -432,60 +439,53 @@ def apply_channel_sorting_with_skip(model):
     # test_point: 测试修改是否正常
     return model
 
-# helper functions to measure latency of a regular PyTorch models.
-@torch.no_grad()
-def measure_latency(model, dummy_input, n_warmup=20, n_test=100):
-    model.eval()
-    # warmup
-    for _ in range(n_warmup):
-        _ = model(dummy_input)
-    # real test
-    t1 = time.time()
-    for _ in range(n_test):
-        _ = model(dummy_input)
-    t2 = time.time()
-    return (t2 - t1) / n_test  # average latency
+class PruningApp:
+    def __init__(self, sys_argv=None, model=None):
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--pruning-ratio',
+            help='Number of pruning ratio use to prune',
+            default=0.5,
+        )
+        parser.add_argument('--epochs',
+            help='Number of epochs to train for',
+            default=5,
+            type=int,
+        )
+        self.cli_args = parser.parse_args(sys_argv)
+        self.model = model
+        self.channel_pruning_ratio = self.cli_args.pruning_ratio
+        self.num_finetune_epochs = self.cli_args.epochs
 
-def print_perf_diff(model, pruned_model):
-    table_template = "{:<15} {:<15} {:<15} {:<15}"
-    print (table_template.format('', 'Original','Pruned','Reduction Ratio'))
+    def main(self):
+        log.info("Starting {}, {}".format(type(self).__name__, self.cli_args))
 
-    # 1. measure the latency of the original model and the pruned model on CPU
-    #   which simulates inference on an edge device
-    dummy_input = torch.randn(1, 3, 32, 32).to('cpu')
-    pruned_model = pruned_model.to('cpu')
-    model = model.to('cpu')
+        # channel pruning
+        pruned_model = self.channel_prune(self.model, self.channel_pruning_ratio)
+        #print(evaluate(pruned_model))
 
-    pruned_latency = measure_latency(pruned_model, dummy_input)
-    original_latency = measure_latency(model, dummy_input)
-    print(table_template.format('Latency (ms)',
-                                round(original_latency * 1000, 1),
-                                round(pruned_latency * 1000, 1),
-                                round(original_latency / pruned_latency, 1)))
+        # finetune
+        num_finetune_epochs = self.num_finetune_epochs
+        finetuned_pruned_models, metrics_dict_list = train(pruned_model, num_finetune_epochs)
 
-    # 2. measure the computation (MACs)
-    original_macs = get_model_macs(model, dummy_input)
-    pruned_macs = get_model_macs(pruned_model, dummy_input)
-    print(table_template.format('MACs (M)',
-                                round(original_macs / 1e6),
-                                round(pruned_macs / 1e6),
-                                round(original_macs / pruned_macs, 1)))
+        # select best model
+        best_model = self.select_best_model(finetuned_pruned_models, metrics_dict_list)
+        #print(evaluate(best_model))
 
-    # 3. measure the model size (params)
-    original_param = get_num_parameters(model)
-    pruned_param = get_num_parameters(pruned_model)
-    print(table_template.format('Param (M)',
-                                round(original_param / 1e6, 2),
-                                round(pruned_param / 1e6, 2),
-                                round(original_param / pruned_param, 1)))
+        #save_model(best_model, 'model-pruned-finetuned.state')
+        return best_model
 
-    # put model back to cuda
-    pruned_model = pruned_model.to('cuda')
-    model = model.to('cuda')
+    def channel_prune(self, model, channel_pruning_ratio):
+        sorted_model = apply_channel_sorting_with_skip(model)
+        pruned_model = channel_prune(sorted_model, channel_pruning_ratio)
+        return pruned_model
 
-def load_model():
-    seg_app = SegmentationTestingApp(["--platform=pytorch", "--model-path=data/models/seg/seg_2025-04-30_18.55.29_seg.3500000.state"])
-    return seg_app.segmentation_model
-
-if __name__ == '__main__':
-    model = load_model()
+    def select_best_model(self, models, metrics_dict_list):
+        max_score = 0
+        best_model = models[0]
+        for i in range(len(metrics_dict_list)):
+            metrics_dict = metrics_dict_list[i]
+            score = metrics_dict['pr/f1_score']
+            if score > max_score:
+                score = max_score
+                best_model = models[i]
+        return best_model

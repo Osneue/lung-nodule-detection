@@ -1,3 +1,4 @@
+import argparse
 import copy
 import torch
 import torch.nn as nn
@@ -6,7 +7,14 @@ from torch.quantization import quantize_fx, QConfig, FakeQuantize, MovingAverage
 from torch.ao.quantization.quantize_fx import QConfigMapping
 from torch.ao.quantization.fake_quantize import FixedQParamsFakeQuantize
 from torch.ao.quantization.observer import FixedQParamsObserver
-from core.unet import UNetConvBlock
+from core.dsets_seg import TrainingLuna2dSegmentationDataset
+from util.logconf import logging
+from .helper import train, evaluate, save_model
+
+log = logging.getLogger(__name__)
+# log.setLevel(logging.WARN)
+# log.setLevel(logging.INFO)
+log.setLevel(logging.DEBUG)
 
 def prepare_model_qat_fx(model, model_path=None, example_inputs=None):
     float_model = copy.deepcopy(model)
@@ -76,3 +84,61 @@ def convert_model_qat_fx(model_qat):
     model_qat = model_qat.eval()
     model_qat = quantize_fx.convert_fx(model_qat)
     return model_qat
+
+class QuantizationApp:
+    def __init__(self, sys_argv=None, model=None):
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--epochs',
+            help='Number of epochs to train for',
+            default=5,
+            type=int,
+        )
+        self.cli_args = parser.parse_args(sys_argv)
+        self.model = model
+        self.num_finetune_epochs = self.cli_args.epochs
+
+        # 创建量化校正集
+        TrainingLuna2dSegmentationDataset(
+            val_stride=10,
+            isValSet_bool=False,
+            contextSlices_count=3,
+            save_calib=True,
+            calib_count=100,
+            calib_dir='./calib_data'
+        )
+
+    def main(self):
+        log.info("Starting {}, {}".format(type(self).__name__, self.cli_args))
+
+        # FX Mode 下的 QAT，将模型转为等待 QAT
+        model_qat = prepare_model_qat_fx(self.model)
+
+        # QAT 微调模型
+        model_qat = model_qat.to('cuda')
+        finetuned_qat_models, metrics_dict_list = train(model_qat, self.num_finetune_epochs)
+
+        # select best model
+        best_model = self.select_best_model(finetuned_qat_models, metrics_dict_list)
+        #print(evaluate(best_model))
+
+        # 转换成量化后的模型
+        model_qat_finetuned = convert_model_qat_fx(best_model)
+        #print(model_qat_finetuned.graph)
+
+        # 测试一下量化后的模型的效果
+        model_qat_finetuned = model_qat_finetuned.to('cpu')
+        #print(evaluate(model_qat_finetuned))
+
+        #save_model(model_qat_finetuned, 'model-qat-finetuned.state')
+        return model_qat_finetuned
+
+    def select_best_model(self, models, metrics_dict_list):
+        max_score = 0
+        best_model = models[0]
+        for i in range(len(metrics_dict_list)):
+            metrics_dict = metrics_dict_list[i]
+            score = metrics_dict['pr/f1_score']
+            if score > max_score:
+                score = max_score
+                best_model = models[i]
+        return best_model
