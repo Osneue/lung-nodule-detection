@@ -93,7 +93,7 @@ class QuantizationApp:
             default=5,
             type=int,
         )
-        self.cli_args = parser.parse_args(sys_argv)
+        self.cli_args, _ = parser.parse_known_args(sys_argv)
         self.model = model
         self.num_finetune_epochs = self.cli_args.epochs
 

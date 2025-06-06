@@ -1,17 +1,11 @@
 import argparse
 import sys
 import torch
-from helper import set_random_seed
+from helper import set_random_seed, namespace_to_args
 from path import ensure_project_root
 ensure_project_root()
 
-from deployment.export_onnx import export_onnx
-from deployment.convert_rknn import convert_main
-from optimization.helper import load_model, eval_perf_mem_on_rk3588, evaluate
-from optimization.pruning import PruningApp
-from optimization.fx_quantization import QuantizationApp
 from util.logconf import logging
-
 log = logging.getLogger(__name__)
 # log.setLevel(logging.WARN)
 # log.setLevel(logging.INFO)
@@ -19,23 +13,43 @@ log.setLevel(logging.DEBUG)
 
 def parse_arg():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--only-cls', action='store_true', default=False)
-    parser.add_argument('--only-seg', action='store_true', default=False)
+    parser.add_argument('--only-cls', action='store_true', default=False,
+        help='Only optimize classification model')
+    parser.add_argument('--only-seg', action='store_true', default=False,
+        help='Only optimize segmentation model')
     parser.add_argument('--seg-model-path', 
                         default='data/models/seg/seg_2025-04-30_18.55.29_seg.3500000.state')
+    parser.add_argument('--pruning-ratio',
+        help='Number of pruning ratio use to prune',
+        default=0.5,
+    )
+    parser.add_argument('--epochs',
+        help='Number of epochs to train',
+        default=5,
+        type=int,
+    )
 
     known_args, unknown_args = parser.parse_known_args()
+
+    unknown_args = namespace_to_args(known_args,
+                    ['only_cls', 'only_seg', 'seg_model_path'])
 
     return known_args, unknown_args
 
 def main():
     known_args, unknown_args = parse_arg()
-    print("Known args:", known_args)
-    print("Other args:", unknown_args)
+    #print("Known args:", known_args)
+    #print("Other args:", unknown_args)
 
     optimizing_all = False
     if known_args.only_cls == False and known_args.only_seg == False:
         optimizing_all = True
+
+    from deployment.export_onnx import export_onnx
+    from deployment.convert_rknn import convert_main
+    from optimization.helper import load_model, eval_perf_mem_on_rk3588, evaluate
+    from optimization.pruning import PruningApp
+    from optimization.fx_quantization import QuantizationApp
 
     if known_args.only_cls or optimizing_all:
         log.info("Optimization for classification models is not yet supported.")

@@ -1,21 +1,8 @@
 import argparse
 import sys
-from helper import set_random_seed
+from helper import set_random_seed, namespace_to_args
 from path import ensure_project_root
 ensure_project_root()
-
-from app.infer.nodule_analysis import NoduleAnalysisApp
-
-def namespace_to_args(namespace):
-    args = []
-    for key, value in vars(namespace).items():
-        #print(key, value)
-        if isinstance(value, bool):
-            if value:
-                args.append(f"--{key.replace('_', '-')}")
-        elif value is not None:
-            args.extend([f"--{key.replace('_', '-')}", str(value)])
-    return args
 
 def parse_arg():
     parser = argparse.ArgumentParser()
@@ -32,17 +19,37 @@ def parse_arg():
         default='data/models/seg/seg_2025-04-30_18.55.29_seg.3500000.state',
         help="Path to state of segmentation model"
     )
-    parser.add_argument(
-        "--single-ct",
-        help="Run over a single CT rather than validation.",
+    parser.add_argument('--batch-size',
+        help='Batch size to use for training',
+        default=4,
+        type=int,
+    )
+    parser.add_argument('--num-workers',
+        help='Number of worker processes for background data loading',
+        default=1,
+        type=int,
+    )
+    parser.add_argument('--run-validation',
+        help='Run over validation rather than a single CT.',
         action='store_true',
+        default=False,
+    )
+    parser.add_argument('series_uid',
+        nargs='?',
+        default=None,
+        help="Series UID to use.",
+    )
+    parser.add_argument('--platform',
+        help="Choose to infer on PC or dev-board",
+        choices=['pytorch', 'rknn'],
+        required=True,
+    )
+    parser.add_argument('--target',
+        help="Specify target chip",
+        choices=['rk3588'], # 可参照 rknn-toolkit2 api 补充其他平台
     )
 
     known_args, unknown_args = parser.parse_known_args()
-
-    if not known_args.single_ct:
-        known_args.run_validation = True
-    known_args.single_ct = None
 
     unknown_args.extend(namespace_to_args(known_args))
 
@@ -50,6 +57,8 @@ def parse_arg():
 
 def main():
     known_args, unknown_args = parse_arg()
+
+    from app.infer.nodule_analysis import NoduleAnalysisApp
 
     cls_prep_app = NoduleAnalysisApp(unknown_args)  # 传入剩余参数
     cls_prep_app.main()

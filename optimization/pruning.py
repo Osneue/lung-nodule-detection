@@ -445,6 +445,7 @@ class PruningApp:
         parser.add_argument('--pruning-ratio',
             help='Number of pruning ratio use to prune',
             default=0.5,
+            type=float,
         )
         parser.add_argument('--epochs',
             help='Number of epochs to train for',
